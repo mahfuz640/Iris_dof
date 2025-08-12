@@ -1,0 +1,6 @@
+pybullet
+opencv-python
+numpy
+matplotlib
+stable-baselines3[extra]
+gymnasium
