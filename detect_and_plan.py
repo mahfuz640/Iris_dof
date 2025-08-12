@@ -3,7 +3,6 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 import time
-import random
 
 # -----------------------------
 # 1. PYBULLET SETUP
@@ -22,29 +21,19 @@ robot_id = p.loadURDF("kuka_iiwa/model.urdf", useFixedBase=True)
 # -----------------------------
 # 2. POSITIONS & OBJECTS
 # -----------------------------
-# Bin positions
-red_box_pos = [0.7, 0.3, 0.05]
-green_box_pos = [0.7, 0.0, 0.05]
-blue_box_pos = [0.7, -0.3, 0.05]
-
-# Spawn bins
-red_box_id = p.loadURDF("cube_small.urdf", red_box_pos, globalScaling=3)
-green_box_id = p.loadURDF("cube_small.urdf", green_box_pos, globalScaling=3)
-blue_box_id = p.loadURDF("cube_small.urdf", blue_box_pos, globalScaling=3)
-
+# Red bin position (open top tray)
+red_box_pos = [0.7, 0.3, 0.02]
+red_box_id = p.loadURDF("tray/traybox.urdf", red_box_pos, p.getQuaternionFromEuler([0, 0, 0]), globalScaling=1)
 p.changeVisualShape(red_box_id, -1, rgbaColor=[1, 0, 0, 1])
-p.changeVisualShape(green_box_id, -1, rgbaColor=[0, 1, 0, 1])
-p.changeVisualShape(blue_box_id, -1, rgbaColor=[0, 0, 1, 1])
 
-# Cube spawn position
+# Cube spawn position (already red)
 cube_pos = [0.4, 0, 0.05]
-cube_id = None
+cube_id = p.loadURDF("cube_small.urdf", cube_pos)
+p.changeVisualShape(cube_id, -1, rgbaColor=[1, 0, 0, 1])  # make cube red
 holding_cube = False
 
-# Counters
+# Counter
 count_red = 0
-count_green = 0
-count_blue = 0
 
 # -----------------------------
 # 3. ARM CONTROL FUNCTIONS
@@ -88,58 +77,30 @@ while True:
     upper_red2 = np.array([180, 255, 255])
     mask_red = cv2.inRange(hsv, lower_red1, upper_red1) | cv2.inRange(hsv, lower_red2, upper_red2)
 
-    # GREEN mask
-    lower_green = np.array([40, 70, 70])
-    upper_green = np.array([80, 255, 255])
-    mask_green = cv2.inRange(hsv, lower_green, upper_green)
+    detected_red = False
+    contours, _ = cv2.findContours(mask_red, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    if contours and cv2.contourArea(max(contours, key=cv2.contourArea)) > 500:
+        x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
+        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
+        detected_red = True
 
-    # BLUE mask
-    lower_blue = np.array([100, 150, 0])
-    upper_blue = np.array([140, 255, 255])
-    mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
+    if detected_red and not holding_cube:
+        pick_cube(cube_pos)
+        holding_cube = True
 
-    detected_color = None
-    for color, mask in [("red", mask_red), ("green", mask_green), ("blue", mask_blue)]:
-        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        if contours and cv2.contourArea(max(contours, key=cv2.contourArea)) > 500:
-            x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 255), 2)
-            detected_color = color
-            break
+        drop_cube([red_box_pos[0], red_box_pos[1], red_box_pos[2] + count_red*0.05])
+        count_red += 1
 
-    if detected_color:
-        if cube_id is None:
-            cube_id = p.loadURDF("cube_small.urdf", cube_pos)
-            if detected_color == "red":
-                p.changeVisualShape(cube_id, -1, rgbaColor=[1, 0, 0, 1])
-            elif detected_color == "green":
-                p.changeVisualShape(cube_id, -1, rgbaColor=[0, 1, 0, 1])
-            elif detected_color == "blue":
-                p.changeVisualShape(cube_id, -1, rgbaColor=[0, 0, 1, 1])
-
-        if not holding_cube:
-            pick_cube(cube_pos)
-            holding_cube = True
-
-        if detected_color == "red":
-            drop_cube([red_box_pos[0], red_box_pos[1], red_box_pos[2] + count_red*0.05])
-            count_red += 1
-        elif detected_color == "green":
-            drop_cube([green_box_pos[0], green_box_pos[1], green_box_pos[2] + count_green*0.05])
-            count_green += 1
-        elif detected_color == "blue":
-            drop_cube([blue_box_pos[0], blue_box_pos[1], blue_box_pos[2] + count_blue*0.05])
-            count_blue += 1
-
-        cube_id = None
+        # Respawn a new red cube
+        cube_id = p.loadURDF("cube_small.urdf", cube_pos)
+        p.changeVisualShape(cube_id, -1, rgbaColor=[1, 0, 0, 1])
         holding_cube = False
 
-    # Show counts on frame
-    cv2.putText(frame, f"Red: {count_red}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(frame, f"Green: {count_green}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    cv2.putText(frame, f"Blue: {count_blue}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+    # Show counts
+    cv2.putText(frame, f"Red Count: {count_red}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-    cv2.imshow("Color Detection", frame)
+    cv2.imshow("Red Detection Only", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
