@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<robot name="generated_tray">
+  <link name="tray_link">
+    <!-- Keep it static-ish; mass 0 allowed in PyBullet -->
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+
+    
+      <!-- base -->
+      <visual>
+        <origin xyz="0 0 0.0025" rpy="0 0 0"/>
+        <geometry><box size="0.24 0.18 0.005"/></geometry>
+        <material name="base_mat">
+          <color rgba="0.3 0.3 0.3 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0.0025" rpy="0 0 0"/>
+        <geometry><box size="0.24 0.18 0.005"/></geometry>
+      </collision>
+        
+    
+      <!-- wall_pos_y -->
+      <visual>
+        <origin xyz="0 0.085 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.24 0.01 0.05"/></geometry>
+        <material name="wall_pos_y_mat">
+          <color rgba="0.15 0.15 0.15 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0.085 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.24 0.01 0.05"/></geometry>
+      </collision>
+        
+    
+      <!-- wall_neg_y -->
+      <visual>
+        <origin xyz="0 -0.085 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.24 0.01 0.05"/></geometry>
+        <material name="wall_neg_y_mat">
+          <color rgba="0.15 0.15 0.15 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 -0.085 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.24 0.01 0.05"/></geometry>
+      </collision>
+        
+    
+      <!-- wall_pos_x -->
+      <visual>
+        <origin xyz="0.115 0 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.01 0.16 0.05"/></geometry>
+        <material name="wall_pos_x_mat">
+          <color rgba="0.15 0.15 0.15 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0.115 0 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.01 0.16 0.05"/></geometry>
+      </collision>
+        
+    
+      <!-- wall_neg_x -->
+      <visual>
+        <origin xyz="-0.115 0 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.01 0.16 0.05"/></geometry>
+        <material name="wall_neg_x_mat">
+          <color rgba="0.15 0.15 0.15 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="-0.115 0 0.030000000000000002" rpy="0 0 0"/>
+        <geometry><box size="0.01 0.16 0.05"/></geometry>
+      </collision>
+        
+  </link>
+</robot>

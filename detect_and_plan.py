@@ -1,109 +1,179 @@
-import cv2
-import numpy as np
 import pybullet as p
 import pybullet_data
+import numpy as np
+import cv2
 import time
+import math
+import os
 
-# -----------------------------
-# 1. PYBULLET SETUP
-# -----------------------------
-p.connect(p.GUI)
-p.setAdditionalSearchPath(pybullet_data.getDataPath())
-p.resetSimulation()
-p.setGravity(0, 0, -9.81)
+# =========================
+# USER SETTINGS
+# =========================
+URDF_DIR = r"C:\Users\Rnd\Desktop\Iris_dof"
+ROBOT_URDF = "mybot.urdf"
+CUBE_URDF = "cube_small.urdf"
 
-# Load plane
-p.loadURDF("plane.urdf")
+# =========================
+# CAMERA SETTINGS
+# =========================
+CAM_WIDTH, CAM_HEIGHT = 640, 480
+CAM_FOV = 60
+NEAR, FAR = 0.1, 3.1
 
-# Load robot arm
-robot_id = p.loadURDF("kuka_iiwa/model.urdf", useFixedBase=True)
+def get_rgbd():
+    """Capture RGB + Depth image from virtual camera."""
+    view_matrix = p.computeViewMatrix(
+        cameraEyePosition=[1, 0, 1],
+        cameraTargetPosition=[0, 0, 0],
+        cameraUpVector=[0, 0, 1]
+    )
+    proj_matrix = p.computeProjectionMatrixFOV(
+        fov=CAM_FOV,
+        aspect=CAM_WIDTH / CAM_HEIGHT,
+        nearVal=NEAR,
+        farVal=FAR
+    )
 
-# -----------------------------
-# 2. POSITIONS & OBJECTS
-# -----------------------------
-# Red bin position (open top tray)
-red_box_pos = [0.7, 0.3, 0.02]
-red_box_id = p.loadURDF("tray/traybox.urdf", red_box_pos, p.getQuaternionFromEuler([0, 0, 0]), globalScaling=1)
-p.changeVisualShape(red_box_id, -1, rgbaColor=[1, 0, 0, 1])
+    width, height, rgb_pixels, depth_pixels, _ = p.getCameraImage(
+        width=CAM_WIDTH,
+        height=CAM_HEIGHT,
+        viewMatrix=view_matrix,
+        projectionMatrix=proj_matrix,
+        renderer=p.ER_BULLET_HARDWARE_OPENGL
+    )
 
-# Cube spawn position (already red)
-cube_pos = [0.4, 0, 0.05]
-cube_id = p.loadURDF("cube_small.urdf", cube_pos)
-p.changeVisualShape(cube_id, -1, rgbaColor=[1, 0, 0, 1])  # make cube red
-holding_cube = False
+    rgb = np.array(rgb_pixels, dtype=np.uint8).reshape((height, width, 4))
+    rgb = rgb[:, :, :3]  # Remove alpha
+    rgb = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-# Counter
-count_red = 0
+    depth = np.array(depth_pixels).reshape((height, width))
+    depth_m = FAR * NEAR / (FAR - (FAR - NEAR) * depth)
 
-# -----------------------------
-# 3. ARM CONTROL FUNCTIONS
-# -----------------------------
-def move_arm_to_position(target_pos, steps=50):
-    jp = p.calculateInverseKinematics(robot_id, 6, target_pos)
-    for i in range(len(jp)):
-        p.setJointMotorControl2(robot_id, i, p.POSITION_CONTROL, jp[i])
-    for _ in range(steps):
-        p.stepSimulation()
-        time.sleep(0.01)
+    return rgb, depth_m
 
-def pick_cube(pos):
-    above = [pos[0], pos[1], pos[2] + 0.2]
-    move_arm_to_position(above)
-    move_arm_to_position(pos)
-    print("Picked cube!")
 
-def drop_cube(pos):
-    above = [pos[0], pos[1], pos[2] + 0.2]
-    move_arm_to_position(above)
-    move_arm_to_position(pos)
-    print("Dropped cube!")
-
-# -----------------------------
-# 4. CAMERA SETUP
-# -----------------------------
-cap = cv2.VideoCapture(0)
-
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-    # RED mask
+def detect_red_cube(rgb):
+    """Detect red object in the camera frame."""
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_BGR2HSV)
     lower_red1 = np.array([0, 120, 70])
     upper_red1 = np.array([10, 255, 255])
     lower_red2 = np.array([170, 120, 70])
     upper_red2 = np.array([180, 255, 255])
-    mask_red = cv2.inRange(hsv, lower_red1, upper_red1) | cv2.inRange(hsv, lower_red2, upper_red2)
 
-    detected_red = False
-    contours, _ = cv2.findContours(mask_red, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    if contours and cv2.contourArea(max(contours, key=cv2.contourArea)) > 500:
-        x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
-        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
-        detected_red = True
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    mask = mask1 | mask2
 
-    if detected_red and not holding_cube:
-        pick_cube(cube_pos)
-        holding_cube = True
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        c = max(contours, key=cv2.contourArea)
+        x, y, w, h = cv2.boundingRect(c)
+        return (x + w // 2, y + h // 2)  # center pixel
+    return None
 
-        drop_cube([red_box_pos[0], red_box_pos[1], red_box_pos[2] + count_red*0.05])
-        count_red += 1
 
-        # Respawn a new red cube
-        cube_id = p.loadURDF("cube_small.urdf", cube_pos)
-        p.changeVisualShape(cube_id, -1, rgbaColor=[1, 0, 0, 1])
-        holding_cube = False
+def move_arm_to_position(joint_indices, target_positions, steps=100):
+    """Move arm smoothly to target positions."""
+    current_positions = [p.getJointState(robot_id, j)[0] for j in joint_indices]
+    for i in range(steps):
+        blend = i / steps
+        positions = [
+            current_positions[j] + blend * (target_positions[j] - current_positions[j])
+            for j in range(len(joint_indices))
+        ]
+        p.setJointMotorControlArray(robot_id, joint_indices, p.POSITION_CONTROL, positions)
+        p.stepSimulation()
+        time.sleep(0.01)
 
-    # Show counts
-    cv2.putText(frame, f"Red Count: {count_red}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-    cv2.imshow("Red Detection Only", frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+# Add a global variable to store click position
+clicked_pos = None
 
-cap.release()
-cv2.destroyAllWindows()
-p.disconnect()
+def mouse_callback(event, x, y, flags, param):
+    global clicked_pos
+    if event == cv2.EVENT_LBUTTONDOWN:
+        clicked_pos = (x, y)
+
+# =========================
+# MAIN SIMULATION
+# =========================
+if __name__ == "__main__":
+    physics_client = p.connect(p.GUI)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    p.setGravity(0, 0, -9.81)
+
+    p.loadURDF("plane.urdf")
+    p.setAdditionalSearchPath(URDF_DIR)
+
+    robot_id = p.loadURDF(os.path.join(URDF_DIR, ROBOT_URDF), useFixedBase=True)
+    cube_id = p.loadURDF(CUBE_URDF, [0.4, 0, 0.02])
+
+    # Create red tray using code
+    tray_collision = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.1, 0.1, 0.02])
+    tray_visual = p.createVisualShape(
+        p.GEOM_BOX,
+        halfExtents=[0.1, 0.1, 0.02],
+        rgbaColor=[1, 0, 0, 1]  # RED color
+    )
+    tray_id = p.createMultiBody(
+        baseMass=0,
+        baseCollisionShapeIndex=tray_collision,
+        baseVisualShapeIndex=tray_visual,
+        basePosition=[0.6, 0.2, 0.02]
+    )
+
+    # Print joint info
+    print("=== JOINTS ===")
+    joint_indices = []
+    for j in range(p.getNumJoints(robot_id)):
+        info = p.getJointInfo(robot_id, j)
+        print(f"{j}: joint='{info[1].decode()}', type={info[2]}, link='{info[12].decode()}'")
+        if info[2] == p.JOINT_REVOLUTE:
+            joint_indices.append(j)
+
+    end_effector_index = 7  # adjust for your robot
+
+    cv2.namedWindow("Camera")
+    cv2.setMouseCallback("Camera", mouse_callback)
+
+    # Simulation loop with safe exit
+    try:
+        while p.isConnected():
+            rgb, depth = get_rgbd()
+            center = detect_red_cube(rgb)
+
+            # Draw detected center for visualization
+            if center:
+                cv2.circle(rgb, center, 8, (0, 255, 0), 2)
+
+            # If user clicked and click is near the cube center, pick and place
+            if clicked_pos and center:
+                dist = np.linalg.norm(np.array(clicked_pos) - np.array(center))
+                if dist < 30:  # 30 pixels tolerance
+                    print("[INFO] Mouse clicked on cube, starting pick and place...")
+                    move_arm_to_position(joint_indices, [0, 0.5, -0.5, 0, 0, 0])
+                    time.sleep(1)
+                    p.setJointMotorControl2(robot_id, 5, p.POSITION_CONTROL, targetPosition=0.02)
+                    p.setJointMotorControl2(robot_id, 7, p.POSITION_CONTROL, targetPosition=0.02)
+                    time.sleep(1)
+                    move_arm_to_position(joint_indices, [0, 0, 0, 0.5, 0, 0])
+                    time.sleep(1)
+                    p.setJointMotorControl2(robot_id, 5, p.POSITION_CONTROL, targetPosition=0.04)
+                    p.setJointMotorControl2(robot_id, 7, p.POSITION_CONTROL, targetPosition=0.04)
+                    time.sleep(1)
+                    clicked_pos = None  # Reset click
+
+            cv2.imshow("Camera", rgb)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q') or cv2.getWindowProperty("Camera", cv2.WND_PROP_VISIBLE) < 1:
+                print("[INFO] Exiting simulation...")
+                break
+
+    except KeyboardInterrupt:
+        print("[INFO] Interrupted by user.")
+
+    finally:
+        cv2.destroyAllWindows()
+        if p.isConnected():
+            p.disconnect()
