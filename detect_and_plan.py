@@ -137,9 +137,9 @@ def mouse_callback(event, x, y, flags, param):
 cv2.namedWindow("Camera")
 cv2.setMouseCallback("Camera", mouse_callback)
 
-# Gripper finger joint indices
-LEFT_FINGER = 6
-RIGHT_FINGER = 8
+# Gripper finger joint indices (keep as before if correct)
+LEFT_FINGER = 5
+RIGHT_FINGER = 7
 
 # =========================
 # MAIN SIMULATION
@@ -172,9 +172,13 @@ if __name__ == "__main__":
     joint_indices = []
     for j in range(p.getNumJoints(robot_id)):
         info = p.getJointInfo(robot_id, j)
-        print(f"{j}: joint='{info[1].decode()}', type={info[2]}, link='{info[12].decode()}'")
+        print(j, info[1].decode(), "limit:", info[8], info[9])
         if info[2] == p.JOINT_REVOLUTE:
             joint_indices.append(j)
+
+    # Print gripper finger joint limits
+    print("LEFT_FINGER joint limit:", p.getJointInfo(robot_id, LEFT_FINGER)[8], p.getJointInfo(robot_id, LEFT_FINGER)[9])
+    print("RIGHT_FINGER joint limit:", p.getJointInfo(robot_id, RIGHT_FINGER)[8], p.getJointInfo(robot_id, RIGHT_FINGER)[9])
 
     # End effector index (change if needed)
     end_effector_index = 7  # আপনার রোবটের শেষ লিঙ্কের index দিন
@@ -215,6 +219,11 @@ if __name__ == "__main__":
 
     pick_place_count = 0
 
+    elbow_joint_index = 3  # Update if your elbow joint index is different
+
+    # Define home joint positions
+    HOME_JOINT_POSITIONS = [0, -math.pi/2, 0, -math.pi/2, 0, 0, 0]  # Update based on your robot's configuration
+
     try:
         while p.isConnected():
             rgb, depth = get_rgbd()
@@ -228,6 +237,14 @@ if __name__ == "__main__":
             cv2.putText(rgb, f"Pick & Place Count: {pick_place_count}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
+            # --- NEW: Close gripper when elbow is down ---
+            elbow_pos = p.getJointState(robot_id, elbow_joint_index)[0]
+            # Suppose elbow down means angle < -1.0 (adjust as needed)
+            if elbow_pos < -1.0:
+                p.setJointMotorControl2(robot_id, LEFT_FINGER, p.POSITION_CONTROL, targetPosition=0.524)
+                p.setJointMotorControl2(robot_id, RIGHT_FINGER, p.POSITION_CONTROL, targetPosition=-0.524)
+
+            # --- rest of your code ---
             if clicked_pos and center:
                 dist = np.linalg.norm(np.array(clicked_pos) - np.array(center))
                 if dist < 30:
@@ -242,14 +259,14 @@ if __name__ == "__main__":
                     move_arm_ik(pick_above, end_effector_index=end_effector_index)
                     time.sleep(0.5)
 
-                    # 2. Lower to just above the cube (2.5cm above cube base)
-                    pick_at = [cube_pos[0], cube_pos[1], cube_pos[2] + 0.025]
+                    # 2. Lower to just above the cube (increase z to avoid floor contact)
+                    pick_at = [cube_pos[0], cube_pos[1], cube_pos[2] + 0.04]
                     move_arm_ik(pick_at, end_effector_index=end_effector_index)
                     time.sleep(0.3)
 
-                    # 3. Close gripper to grasp
-                    p.setJointMotorControl2(robot_id, LEFT_FINGER, p.POSITION_CONTROL, targetPosition=0.0)
-                    p.setJointMotorControl2(robot_id, RIGHT_FINGER, p.POSITION_CONTROL, targetPosition=0.0)
+                    # 3. Close gripper to grasp (fully close)
+                    p.setJointMotorControl2(robot_id, LEFT_FINGER, p.POSITION_CONTROL, targetPosition=0.5236)
+                    p.setJointMotorControl2(robot_id, RIGHT_FINGER, p.POSITION_CONTROL, targetPosition=-0.5236)
                     time.sleep(0.5)
 
                     # 4. Lift up
@@ -261,18 +278,22 @@ if __name__ == "__main__":
                     move_arm_ik(place_above, end_effector_index=end_effector_index)
                     time.sleep(0.5)
 
-                    # 6. Lower to just above tray (2.5cm above tray base)
-                    place_at = [tray_pos[0], tray_pos[1], tray_pos[2] + 0.025]
+                    # 6. Lower to just above tray (increase z to avoid floor contact)
+                    place_at = [tray_pos[0], tray_pos[1], tray_pos[2] + 0.04]  # was 0.025
                     move_arm_ik(place_at, end_effector_index=end_effector_index)
                     time.sleep(0.3)
 
-                    # 7. Open gripper to release
-                    p.setJointMotorControl2(robot_id, LEFT_FINGER, p.POSITION_CONTROL, targetPosition=0.04)
-                    p.setJointMotorControl2(robot_id, RIGHT_FINGER, p.POSITION_CONTROL, targetPosition=0.04)
+                    # 7. Open gripper to release (fully open)
+                    p.setJointMotorControl2(robot_id, LEFT_FINGER, p.POSITION_CONTROL, targetPosition=0.0)
+                    p.setJointMotorControl2(robot_id, RIGHT_FINGER, p.POSITION_CONTROL, targetPosition=0.0)
                     time.sleep(0.5)
 
                     # 8. Lift up again
                     move_arm_ik(place_above, end_effector_index=end_effector_index)
+                    time.sleep(0.5)
+
+                    # 9. Move arm to home/start position
+                    move_arm_to_position([0, 1, 2, 3], [0, 0, 0, 0], steps=100)
                     time.sleep(0.5)
 
                     clicked_pos = None
@@ -292,3 +313,7 @@ if __name__ == "__main__":
         cv2.destroyAllWindows()
         if p.isConnected():
             p.disconnect()
+
+    # Move arm to home position
+    move_arm_to_position([0, 1, 2, 3], HOME_JOINT_POSITIONS, steps=100)
+    time.sleep(0.5)
